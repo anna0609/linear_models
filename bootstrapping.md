@@ -85,8 +85,8 @@ lm(y ~ x, data = sim_df_const) %>% broom::tidy()
     ## # A tibble: 2 x 5
     ##   term        estimate std.error statistic   p.value
     ##   <chr>          <dbl>     <dbl>     <dbl>     <dbl>
-    ## 1 (Intercept)     1.78    0.0955      18.6 4.91e- 49
-    ## 2 x               3.04    0.0647      47.0 1.58e-125
+    ## 1 (Intercept)     1.99    0.0886      22.5 8.04e- 62
+    ## 2 x               3.05    0.0638      47.7 5.41e-127
 
 ``` r
 lm(y ~ x, data = sim_df_nonconst) %>% broom::tidy()
@@ -95,8 +95,8 @@ lm(y ~ x, data = sim_df_nonconst) %>% broom::tidy()
     ## # A tibble: 2 x 5
     ##   term        estimate std.error statistic   p.value
     ##   <chr>          <dbl>     <dbl>     <dbl>     <dbl>
-    ## 1 (Intercept)     1.96    0.110       17.8 3.88e- 46
-    ## 2 x               2.94    0.0746      39.5 7.19e-109
+    ## 1 (Intercept)     2.01    0.0890      22.6 4.02e- 62
+    ## 2 x               3.06    0.0641      47.7 7.87e-127
 
 ## Draw one bootstrap sample
 
@@ -119,10 +119,6 @@ boot_sample(sim_df_nonconst) %>%  #把 sim_df_nonconst 代入function中的df
 
     ## `geom_smooth()` using formula 'y ~ x'
 
-    ## Warning: Removed 2 rows containing non-finite values (stat_smooth).
-
-    ## Warning: Removed 2 rows containing missing values (geom_point).
-
 <img src="bootstrapping_files/figure-gfm/unnamed-chunk-5-1.png" width="90%" />
 
 ``` r
@@ -134,5 +130,105 @@ boot_sample(sim_df_nonconst) %>%
     ## # A tibble: 2 x 5
     ##   term        estimate std.error statistic   p.value
     ##   <chr>          <dbl>     <dbl>     <dbl>     <dbl>
-    ## 1 (Intercept)     2.08    0.105       19.8 7.27e- 53
-    ## 2 x               2.83    0.0704      40.3 9.75e-111
+    ## 1 (Intercept)     1.96    0.100       19.6 3.11e- 52
+    ## 2 x               3.06    0.0696      44.0 4.72e-119
+
+## Many samples and analysis
+
+``` r
+boot_straps = 
+  tibble(
+    strap_number = 1:1000,
+    strap_sample = rerun(1000, boot_sample(sim_df_nonconst))
+  )
+```
+
+Can I run my analysis on these…?
+
+``` r
+boot_results = 
+  boot_straps %>% 
+  mutate(
+    models = map(.x = strap_sample, ~lm(y ~ x, data = .x)),
+    results = map(models, broom::tidy)
+  ) %>% 
+  select(strap_number, results) %>% 
+  unnest(results)
+```
+
+What do I have now?
+
+``` r
+boot_results %>% 
+  group_by(term) %>% 
+    summarize(
+      mean_est = mean(estimate),
+      sd_est = sd(estimate)
+    )
+```
+
+    ## `summarise()` ungrouping output (override with `.groups` argument)
+
+    ## # A tibble: 2 x 3
+    ##   term        mean_est sd_est
+    ##   <chr>          <dbl>  <dbl>
+    ## 1 (Intercept)     2.01 0.0506
+    ## 2 x               3.06 0.0859
+
+Look at the distributions
+
+``` r
+boot_results %>% 
+  filter(term == "x") %>% 
+  ggplot(aes(x = estimate)) +
+  geom_density()
+```
+
+<img src="bootstrapping_files/figure-gfm/unnamed-chunk-10-1.png" width="90%" />
+
+Construct bootstrap CI
+
+``` r
+boot_results %>% 
+  group_by(term) %>% 
+  summarize(
+    ci_lower = quantile(estimate, 0.025),
+    ci_upper = quantile(estimate, 0.975)
+  )
+```
+
+    ## `summarise()` ungrouping output (override with `.groups` argument)
+
+    ## # A tibble: 2 x 3
+    ##   term        ci_lower ci_upper
+    ##   <chr>          <dbl>    <dbl>
+    ## 1 (Intercept)     1.91     2.10
+    ## 2 x               2.89     3.23
+
+## Bootstrap using modelr
+
+Can I simplify anything ..? YES
+
+``` r
+sim_df_nonconst %>% #change the datasets also works for the same codes
+  bootstrap(1000, id = "strap_number") %>% 
+    mutate(
+    models = map(.x = strap, ~lm(y ~ x, data = .x)),
+    results = map(models, broom::tidy)
+  ) %>% 
+  select(strap_number, results) %>% 
+  unnest(results) %>% 
+  group_by(term) %>% 
+    summarize(
+      mean_est = mean(estimate),
+      sd_est = sd(estimate)
+    )
+```
+
+    ## `summarise()` ungrouping output (override with `.groups` argument)
+
+    ## # A tibble: 2 x 3
+    ##   term        mean_est sd_est
+    ##   <chr>          <dbl>  <dbl>
+    ## 1 (Intercept)     2.01 0.0498
+    ## 2 x               3.05 0.0851
