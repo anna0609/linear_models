@@ -5,7 +5,7 @@ output: github_document
 
 ```{r setup}
 library(tidyverse)
-library(p8105.datasets)
+library(modelr)
 
 knitr::opts_chunk$set(
   fig.width = 6,
@@ -23,162 +23,64 @@ scale_colour_discrete = scale_colour_viridis_d
 scale_fill_discrete = scale_fill_viridis_d
 ```
 
-
-## Import data
-
+## Simulate data
 ```{r}
-data("nyc_airbnb")
+n_samp = 250
 
-nyc_airbnb = 
-  nyc_airbnb %>% 
-  mutate(stars = review_scores_location / 2) %>% 
-  rename(
-    borough = neighbourhood_group,
-    neighborhood = neighbourhood) %>% 
-  filter(borough != "Staten Island") %>% 
-  select(price, stars, borough, neighborhood, room_type)
-```
-
-
-## Fit a model
-```{r}
-nyc_airbnb %>% 
-  ggplot(aes(x = stars, y = price, color = borough)) +
-  geom_point()
-```
-
-
-Let's fit the model we care about.
-```{r}
-fit = lm(price ~ stars + borough, data = nyc_airbnb)
-```
-
-Let's look at the results...
-
-```{r, include=FALSE}
-fit
-summary(fit) #a matrix
-summary(fit)$coef %>% class ## only get coefficient 
-coef(fit)
-residuals(fit)
-```
-
-Let's look at the results better ...
-```{r}
-broom::glance(fit)
-
-broom::tidy(fit) %>%   # a data frame
-select(-std.error, -statistic) %>% 
-  mutate(
-    term = str_replace(term, "borough", "Borough: ")
-  ) %>% 
-  knitr::kable(digits = 3)
-```
-
-## Be in control of factors
-```{r}
-nyc_airbnb =
-  nyc_airbnb %>% 
-  mutate(
-    borough = fct_infreq(borough), # order by frequency of the borough
-    room_type = fct_infreq(room_type)
-         )
-```
-
-
-Look at the plot again
-```{r}
-nyc_airbnb %>% 
-  ggplot(aes(x = stars, y = price, color = borough)) +
-  geom_point()
-```
-Change the reference group to Manhattan instead of Bronx
-
-```{r}
-fit = lm(price ~ stars + borough, data = nyc_airbnb)
-
-broom::tidy(fit)
-broom::glance(fit)
-```
-
-
-## Diagnostics
-
-```{r}
-nyc_airbnb %>% 
-modelr::add_residuals(fit) %>% 
-  ggplot(aes(x = borough, y = resid)) +
-  geom_violin() +
-  ylim(-500, 1500)
-
-nyc_airbnb %>% 
-  modelr::add_residuals(fit) %>% 
-  ggplot(aes(x = stars, y = resid)) +
-  geom_point() +
-  facet_wrap(.~borough) # show each borough's plot
-```
-
-## Hypothesis tests
-
-This does t-test by default
-```{r}
-fit %>% 
-  broom::tidy() 
-```
-
-What about the significance of `borough`
-```{r}
-fit_null = lm(price ~ stars, data = nyc_airbnb) # if borugh unassociated with price is true
-fit_alt = lm(price ~ stars + borough, data = nyc_airbnb)
-
-anova(fit_null, fit_alt) %>% 
-  broom::tidy()
-```
-
-## nest data, fit models (interactions)
-
-This is pretty formal and also complex
-```{r}
-fit = lm(price ~ stars * borough + room_type * borough, data = nyc_airbnb)
-broom::tidy(fit)
-```
-
-This is more exploratory but easier to understand
-```{r}
-nyc_airbnb %>% 
-  nest(data = -borough) %>% 
-  mutate(
-    models = map(.x = data, ~lm(price ~ stars + room_type, data = .x)),
-    results = map(models, broom::tidy)
-  ) %>%   #pull(results)
-  select(-data, - models) %>% 
-  unnest(results) %>% 
-  filter(term != "(Intercept)") %>% 
-  select(borough, term, estimate) %>% 
-  pivot_wider(
-    names_from = borough,
-    values_from = estimate
+sim_df_const = 
+  tibble(
+    x = rnorm(n_samp, 1, 1),
+    error = rnorm(n_samp, 0, 1),
+    y = 2 + 3 * x + error
   )
 
+sim_df_nonconst = sim_df_const %>% 
+  mutate(
+  error = error * .75 * x,
+  y = 2 + 3 * x + error
+)
+```
+
+Plot the datasets
+```{r}
+sim_df_const %>% 
+  ggplot(aes(x = x, y= y)) +
+  geom_point() +
+  geom_smooth(method = "lm")
+
+sim_df_nonconst %>% 
+  ggplot(aes(x = x, y= y)) +
+  geom_point() +
+  geom_smooth(method = "lm")
 ```
 
 
-Let's nest even more ...
 ```{r}
-nyc_airbnb %>% 
-  filter(borough == "Manhattan") %>% 
-  nest(data = -neighborhood) %>% 
-  mutate(
-    models = map(.x = data, ~lm(price ~ stars + room_type, data = .x)),
-    results = map(models, broom::tidy)
-  ) %>%   #pull(results)
-  select(-data, - models) %>% 
-  unnest(results) %>% 
-  filter(str_detect(term, "room_type")) %>% 
-  ggplot(aes(x = neighborhood, y = estimate)) +
-  geom_point() +
-  facet_wrap(.~term) +
-  theme(axis.text.x = element_text(angle = 70, vjust = 0.5, hjust = 1))
-# the plots compare the private and shared room to entire home!
+lm(y ~ x, data = sim_df_const) %>% broom::tidy()
+lm(y ~ x, data = sim_df_nonconst) %>% broom::tidy()
+```
+
+
+## Draw one bootstrap sample
+```{r}
+boot_sample = function(df){
+  sample_frac(df, replace = TRUE) %>% #draw a sample of a particular proportion of dataset
+    arrange(x)
+}
+```
+
+Check if this works ..
+```{r}
+boot_sample(sim_df_nonconst) %>%  #把 sim_df_nonconst 代入function中的df
+    ggplot(aes(x = x, y= y)) +
+  geom_point(alpha = 0.3) +
+  geom_smooth(method = "lm") +
+  ylim(-5, 16)
+```
+
+```{r}
+boot_sample(sim_df_nonconst) %>% 
+  lm(y ~ x, data = .) %>% 
+  broom::tidy()
 ```
 
